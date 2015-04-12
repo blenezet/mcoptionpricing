@@ -19,6 +19,7 @@
 package com.lampalork.mcoptionpricing
 
 import org.apache.spark.SparkContext
+import org.apache.spark.SparkContext._ //import the implicit conversions
 import org.apache.spark.SparkConf
 import org.apache.spark.serializer.{KryoSerializer, KryoRegistrator}
 import com.esotericsoftware.kryo.Kryo
@@ -53,9 +54,7 @@ object MonteCarloOptionPricing {
     println("*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-")
     
     val numSimulations = args(0).toInt
-    val parallelism = args(1).toInt
-    
-    val numTimeSteps = 100
+    val parallelism = args(1).toInt    
     
     var option1 = VanillaOption(100,1.0,100, 0.20, 0.05)
     //var instruments = Array(option1)
@@ -69,15 +68,19 @@ object MonteCarloOptionPricing {
     val seedRdd = sc.parallelize(seeds, parallelism)
     
     // Main computation: run simulations and compute aggregate return for each
-    val trialsRdd = seedRdd.flatMap(runSimulation(_, numSimulations / parallelism, numTimeSteps, broadcastInstrument.value))
+    val trialsRdd = seedRdd.flatMap(runSimulation(_, numSimulations / parallelism, broadcastInstrument.value))
     
     // Cache the results so that we don't recompute for both of the summarizations below
     trialsRdd.cache()
     
     // Show stock path
     //.foreach(println)
-    trialsRdd.foreach((x: Array[Double]) => println(x.last))
-    //println(trialsRdd)
+    //trialsRdd.foreach((x: Array[Double]) => println(x.last))
+    //val option1payoffs = trialsRdd.map((x: Array[Double]) => x.last)
+    val option1payoffs = trialsRdd.map((x: Array[Double]) => math.max(x.last - option1.strike,0))
+    option1payoffs.foreach(println)
+    val option1price = option1payoffs.mean()
+    println("Otion1 Price: " + option1price)
     
     //val varFivePercent = trialsRdd.takeOrdered(math.max(numTrials / 20, 1)).last
     
@@ -118,12 +121,13 @@ object MonteCarloOptionPricing {
     //}
     // pw.close()
   }
-
   
-  def runSimulation(seed: Long, numSimulations: Int, numTimeSteps: Int, instrument: VanillaOption): Array[Array[Double]] = {
-    val rand = new MersenneTwister(seed)
-    val normal = new NormalDistribution()
+  def runSimulation(seed: Long, numSimulations: Int, instrument: VanillaOption): Array[Array[Double]] = {
+    //val rand = new MersenneTwister(seed)
+    //val normal = new NormalDistribution(rand, 0.0, 1.0)
+    val r = new scala.util.Random
     
+    val numTimeSteps = math.round( instrument.expiry / (1.0/365)).toInt    
     val dt = instrument.expiry / numTimeSteps
     
     val timeSeries = new Array[Array[Double]](numSimulations)
@@ -135,7 +139,8 @@ object MonteCarloOptionPricing {
       val timeSerie = new Array[Double](numTimeSteps + 1)       
       timeSerie(0) = instrument.spot // init first stock price to spot   
       for (k <- 1 until (numTimeSteps+1)) {
-        val dX = normal.sample()
+        //val dX = normal.sample()
+        val dX = r.nextGaussian()
         val dS = timeSerie(k-1) * (instrument.mu * dt + instrument.sigma * math.sqrt(dt) * dX)
         timeSerie(k) = timeSerie(k-1) + dS
       }
