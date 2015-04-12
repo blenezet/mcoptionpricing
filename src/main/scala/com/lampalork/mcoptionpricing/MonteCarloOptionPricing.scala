@@ -78,8 +78,8 @@ object MonteCarloOptionPricing {
     //trialsRdd.foreach((x: Array[Double]) => println(x.last))
     //val option1payoffs = trialsRdd.map((x: Array[Double]) => x.last)
     val option1payoffs = trialsRdd.map((x: Array[Double]) => math.max(x.last - option1.strike,0))
-    option1payoffs.foreach(println)
-    val option1price = option1payoffs.mean()
+    //option1payoffs.foreach(println)
+    val option1price = math.exp(- option1.mu * option1.expiry) * option1payoffs.mean()
     println("Otion1 Price: " + option1price)
     
     //val varFivePercent = trialsRdd.takeOrdered(math.max(numTrials / 20, 1)).last
@@ -125,10 +125,11 @@ object MonteCarloOptionPricing {
   def runSimulation(seed: Long, numSimulations: Int, instrument: VanillaOption): Array[Array[Double]] = {
     //val rand = new MersenneTwister(seed)
     //val normal = new NormalDistribution(rand, 0.0, 1.0)
-    val r = new scala.util.Random
-    
     val numTimeSteps = math.round( instrument.expiry / (1.0/365)).toInt    
     val dt = instrument.expiry / numTimeSteps
+    
+    val r = new scala.util.Random
+    //val phi = Seq.fill(numSimulations * numTimeSteps)(r.nextGaussian)    
     
     val timeSeries = new Array[Array[Double]](numSimulations)
     
@@ -141,8 +142,9 @@ object MonteCarloOptionPricing {
       for (k <- 1 until (numTimeSteps+1)) {
         //val dX = normal.sample()
         val dX = r.nextGaussian()
-        val dS = timeSerie(k-1) * (instrument.mu * dt + instrument.sigma * math.sqrt(dt) * dX)
-        timeSerie(k) = timeSerie(k-1) + dS
+        //val dX = phi(numSimulations*numTimeSteps + (k-1))
+        val dS = instrument.mu * dt + instrument.sigma * math.sqrt(dt) * dX
+        timeSerie(k) = timeSerie(k-1) * (1.0 + dS)
       }
       
       // save timeserie
