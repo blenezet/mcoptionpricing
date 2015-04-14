@@ -42,19 +42,20 @@ abstract class Option {
   def expiry: Double
   def sigma: Double
   def mu: Double
+  def payoff(xc: Array[Double]) : Double
 }
 
 case class VanillaOption(spot: Double = 100.0, expiry: Double = 1.0, strike: Double = 100.0, sigma: Double = 0.10, mu: Double = 0.0)
   extends Option
 {
-  def payoff(xc: Array[Double]) = math.max(xc.last - strike,0)
+  override def payoff(xc: Array[Double]) = math.max(xc.last - strike,0)
   override def toString() = "VanillaOption with spot=" + spot + " strike=" + strike
 }
 
 case class UpAndOutOption(spot: Double = 100.0, expiry: Double = 1.0, strike: Double = 100.0, barrier: Double = 120.0, sigma: Double = 0.10, mu: Double = 0.0)
   extends Option
 {
-  def payoff(xc: Array[Double]) = {
+  override def payoff(xc: Array[Double]) = {
     // reduceLeft is a concise/idiomatic approach
     // http://alvinalexander.com/scala/scala-reduceleft-examples
     var indicator = 1
@@ -82,36 +83,34 @@ object MonteCarloOptionPricing {
     val numSimulations = args(0).toInt
     val parallelism = args(1).toInt    
     
-    
     var option1 = new VanillaOption(100,1.0,100, 0.20, 0.05)
     var option2 = new UpAndOutOption(100,1.0,100, 120, 0.20, 0.05)
     var instruments = Array(option1,option2)
     
     // Send all instruments to every node
-    val broadcastInstrument = sc.broadcast(option1)
-    //val broadcastInstruments = sc.broadcast(instruments)
+    val broadcastInstruments = sc.broadcast(instruments)
     
-    //for (i <- 0 until broadcastInstruments.lenght)
+    broadcastInstruments.value.foreach( option => {
+      // Generate different seeds so that our simulations don't all end up with the same results
+      val seed = System.currentTimeMillis()
+      val seeds = (seed until seed + parallelism)
+      val seedRdd = sc.parallelize(seeds, parallelism)
+      
+      // Main computation: run simulations and compute aggregate return for each
+      val simulationsRdd = seedRdd.flatMap(runSimulation(_, numSimulations / parallelism, option))
+      
+      // Cache the results so that we don't recompute for both of the summarizations below
+      simulationsRdd.cache()
+      
+      //val option1payoffs = trialsRdd.map((x: Array[Double]) => math.max(x.last - option1.strike,0))
+      val payoffsRdd = simulationsRdd.map((x: Array[Double]) => option.payoff(x))
     
-     // Generate different seeds so that our simulations don't all end up with the same results
-    val seed = System.currentTimeMillis()
-    val seeds = (seed until seed + parallelism)
-    val seedRdd = sc.parallelize(seeds, parallelism)
+      // Compute option price
+      val price = math.exp(- option.mu * option.expiry) * payoffsRdd.mean()
+      println(option + ": " + price)
+    })
     
-    // Main computation: run simulations and compute aggregate return for each
-    val trialsRdd = seedRdd.flatMap(runSimulation(_, numSimulations / parallelism, broadcastInstrument.value))
-    
-    // Cache the results so that we don't recompute for both of the summarizations below
-    trialsRdd.cache()
-    
-    // Calculate payoffs
-    //val option1payoffs = trialsRdd.map((x: Array[Double]) => math.max(x.last - option1.strike,0))
-    val option1payoffs = trialsRdd.map((x: Array[Double]) => option1.payoff(x))
-    
-    // Compute option price
-    val option1price = math.exp(- option1.mu * option1.expiry) * option1payoffs.mean()
-    println(option1 + ": " + option1price)
-    
+
   }
   
   def runSimulation(seed: Long, numSimulations: Int, instrument: Option): Array[Array[Double]] = {
